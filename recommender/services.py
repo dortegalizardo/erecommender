@@ -24,8 +24,10 @@ class Boto3FileDownload:
         print(f"New folder created -> {path}")
         print(f"Downloading file summary -> {filekey}")
 
+        # Download book to destination path
         bucket.download_file(f"{filekey}/summary.json", path)
 
+        # Testing if a file was download by requesting the size of the file.
         try:
             filesize = os.path.getsize(path)
         except OSError:
