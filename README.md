@@ -1,1 +1,1 @@
-# erecommender
+# ebook-recommender

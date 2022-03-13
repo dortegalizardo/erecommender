@@ -1,0 +1,22 @@
+//Something
+
+
+SELECT COUNT(id)
+	FROM public.analytics_titlepageviewed;
+
+
+// Get the most read books in analytics.
+SELECT
+  title,
+  COUNT(title) AS value_occurrence
+
+FROM
+  public.analytics_titlepageviewed
+
+GROUP BY 
+  title
+
+ORDER BY 
+  value_occurrence DESC
+
+LIMIT 1100;
