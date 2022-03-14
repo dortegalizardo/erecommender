@@ -116,6 +116,12 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
+STATIC_URL = "/static/"
+MEDIA_URL = "/media/"
+
+# This path should be created in the project directory
+BOOK_PATH = os.path.join(BASE_DIR.parent, "books")
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.BasicAuthentication',

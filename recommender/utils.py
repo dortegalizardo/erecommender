@@ -3,6 +3,7 @@ from typing import Any
 import json
 import os
 import re
+import requests
 import stanza
 import numpy as np
 import unicodedata
@@ -92,3 +93,16 @@ class MapTitleTextJSONFiles:
                 complete_text += value
                 continue
         return complete_text
+
+
+class TokenAuth(requests.auth.AuthBase):
+    """
+    Token de autenticación para hacer peticiones a Content Center.
+    """
+
+    def __init__(self, auth_token):
+        self._auth_token = auth_token
+
+    def __call__(self, r):
+        r.headers["Authorization"] = f"Token {self._auth_token}"
+        return r

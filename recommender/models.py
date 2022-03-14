@@ -7,16 +7,16 @@ from django.utils.translation import gettext_lazy as _
 class Title(models.Model):
     identifier = models.CharField(max_length=20, help_text=_("Input the book identifier."))
     publisher = models.CharField(_("Publisher"),blank=True, max_length=120, help_text=_("Input the publisher associated to the book."))
-    theme = models.CharField(_("Theme"), max_length=100, help_text=_("Input the theme associated to the book."))
+    theme = models.CharField(_("Theme"), max_length=100, blank=True, help_text=_("Input the theme associated to the book."))
     name = models.CharField(_("Title name"),blank=True, max_length=250, help_text=_("Input the name given to the resource."))
-    complete_text = models.TextField(_("Raw Text"), help_text=_("Complete text of the book."))
-    parsed_tokens = models.TextField(_("Tokens"), help_text=_("Input tokens separated by a comma"))
+    complete_text = models.TextField(_("Raw Text"), blank=True, help_text=_("Complete text of the book."))
+    parsed_tokens = models.TextField(_("Tokens"), blank=True, help_text=_("Input tokens separated by a comma"))
 
     class Meta:
         verbose_name = "Ranked Title"
         verbose_name_plural = "Ranked Titles"
 
-    def __init__(self):
+    def __str__(self):
         return f'Title: {self.identifier} - name: > {self.name}'
 
 
@@ -30,7 +30,7 @@ class Recommendation(models.Model):
         verbose_name = "Recommendation"
         verbose_name_plural = "Recommendations"
 
-    def __init__(self):
+    def __str__(self):
         return f'Base: {self.title.name} - Recommendation: {self.recommendation.name}'
 
 
@@ -42,5 +42,5 @@ class RecommendationRating(models.Model):
         verbose_name = "Title Rating"
         verbose_name_plural = "Title Ratings"
 
-    def __init__(self):
+    def __str__(self):
         return f'Title: {self.recommendation.id} - Rating: {self.rating}'

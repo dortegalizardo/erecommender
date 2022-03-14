@@ -5,7 +5,7 @@ from django.contrib import admin
 from recommender.models import Title, Recommendation, RecommendationRating
 
 
-admin.register(Title)
+@admin.register(Title)
 class TitleAdmin(admin.ModelAdmin):
     list_display = ("name", "publisher", "theme", "identifier",)
     list_display_links = ("name", )
@@ -13,7 +13,7 @@ class TitleAdmin(admin.ModelAdmin):
     search_fields = ("name", "publisher", "theme", "identifier")
 
 
-admin.register(Recommendation)
+@admin.register(Recommendation)
 class RecommendationAdmin(admin.ModelAdmin):
     list_display = ("title", "recommendation",)
     list_display = ("title",)

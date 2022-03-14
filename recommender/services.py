@@ -2,6 +2,8 @@ import os
 import boto3
 import botocore
 
+from django.conf import settings
+
 class Boto3FileDownload:
     def __init__(self, region_name, bucket_name, profile_name):
         self.region_name = region_name
@@ -9,7 +11,11 @@ class Boto3FileDownload:
         self.profile_name = profile_name
 
     def download_file(self, filekey: str) -> None:
-        base_path = '/books/'
+        """
+        Function that provides help on downloading files from S3
+        to the base path of BOOK_PATH
+        """
+        base_path = settings.BOOK_PATH
         try:
             prod = boto3.Session(profile_name=self.profile_name, region_name=self.region_name)
         except botocore.exceptions.ProfileNotFound:
@@ -20,12 +26,26 @@ class Boto3FileDownload:
 
         # Create local new folder
         path = os.path.join(base_path, filekey)
-        os.mkdir(path)
+
+        # small fallback in case the folder already exists
+        if os.path.exists(path):
+            print("Path exists!")
+            return None
+
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            print("File already exists!")
+
         print(f"New folder created -> {path}")
         print(f"Downloading file summary -> {filekey}")
 
         # Download book to destination path
-        bucket.download_file(f"{filekey}/summary.json", path)
+        try:
+            bucket.download_file(f"{filekey}/summary.json", str(path+"/summary.json"))
+        except botocore.exceptions.ClientError:
+            print(f"{filekey} -> Probably not found!")
+            raise ValueError
 
         # Testing if a file was download by requesting the size of the file.
         try:

@@ -2,6 +2,9 @@
 local_settings.py
 site_static/
 media/
+books/
+
+content_service.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
