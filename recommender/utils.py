@@ -65,6 +65,7 @@ class MapTitleTextJSONFiles:
 
     def process_json_file(self, folder) -> str:
         summary = None
+        merged_text = ''
         try:
             with open(f"{folder}/summary.json") as file:
                 summary = json.load(file)
@@ -73,9 +74,9 @@ class MapTitleTextJSONFiles:
         except Exception as e:  # Errores ligados a abrir el archivo temporal.
             print(f"Something went wrong! {e}")
         print("Processing has finished!")
-        return merged_text
+        return merged_text.replace("- ","")
 
-    def _string_merge(summary: Any) -> str:
+    def _string_merge(self, summary: any) -> str:
         '''
         Functions that will string together all the pages of a summary
         :param: summary 
@@ -86,7 +87,7 @@ class MapTitleTextJSONFiles:
             # Decode the text value of each item
             try:
                 encoded_value = value.encode(FORMAT)
-                decoded_value = encoded_value.decode('utf-8')
+                decoded_value = encoded_value.decode('utf-8', errors="replace").replace("\x00", "\uFFFD")
                 complete_text += decoded_value
             except Exception as e:
                 # Fallback in case ther is nothing to decode

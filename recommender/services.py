@@ -2,6 +2,7 @@ import os
 import boto3
 import botocore
 
+# Django Imports
 from django.conf import settings
 
 class Boto3FileDownload:

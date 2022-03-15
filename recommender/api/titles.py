@@ -1,6 +1,9 @@
 import time
 import json
 
+# Django Imports
+from django.conf import settings
+
 # Django Rest Imports
 from rest_framework import authentication, status
 from rest_framework.response import Response
@@ -8,6 +11,7 @@ from rest_framework.views import APIView
 
 # Import Utils
 from recommender.services import Boto3FileDownload
+from recommender.utils import MapTitleTextJSONFiles
 
 # Note: This can be change to another service, for the purpose
 #       of this particular project the service is not commited 
@@ -52,7 +56,8 @@ class MapTitleInformation(APIView):
             service = get_service()
             for key in list_keys:
                 title = service.get_title(id=key)
-                self._create_title_from_service(title)
+                if title:
+                    self._create_title_from_service(title)
         else:
             for item in body["titles"]:
                 self._create_title(item)
@@ -64,11 +69,42 @@ class MapTitleInformation(APIView):
     def _create_title_from_service(self, title: dict) -> None:
         test_title = Title.objects.filter(identifier=title.get("sync_key"))
         if not test_title.exists():
+            if title.get("theme"):
+                theme = title.get("theme")[0]["name"]
+            else:
+                theme = ""
             data = {
                 "identifier": title.get("sync_key"),
                 "publisher": title.get("publisher")["name"],
-                "theme": title.get("theme")[0]["name"],
+                "theme": theme,
                 "name": title.get("title_name"),
             }
             new_title = Title(**data)
             new_title.save()
+
+
+class GetTextJSONFiles(APIView):
+    def post(self, request):
+        body = json.loads(request.body)
+        file_path = body.get("file_path", settings.BOOK_PATH)
+        process_all = body.get("process_all", False)
+        if process_all:
+            queryset = Title.objects.all()
+        else:
+            queryset = Title.objects.filter(complete_text="")
+
+        # Process all files
+        map_service = MapTitleTextJSONFiles(settings.BOOK_PATH)
+        
+        for title in queryset:
+            folder = f"{file_path}/{title.identifier}"
+            merged_text = map_service.process_json_file(folder=folder)
+            title.complete_text = merged_text
+            title.save()
+            print(f"Complete text saved for -> {title.name}")
+
+        return Response({"status": "OK"}, status=status.HTTP_200_OK)
+
+
+class PrepareTrainData(APIView):
+    pass
