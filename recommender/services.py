@@ -5,6 +5,7 @@ import botocore
 # Django Imports
 from django.conf import settings
 
+
 class Boto3FileDownload:
     def __init__(self, region_name, bucket_name, profile_name):
         self.region_name = region_name

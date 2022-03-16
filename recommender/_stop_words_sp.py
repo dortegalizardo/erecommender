@@ -446,5 +446,15 @@ SPANISH_WORDS = [
     "ver",
     "vez",
     "y",
-    "ya"
+    "ya",
+    "atra",
+    "cosa",
+    "cualquiera",
+    "grande",
+    "serio",
+    "tercero",
+    "trave",
+    "tú",
+    "vo",
+    "él"
     ]
