@@ -11,6 +11,7 @@ class Title(models.Model):
     name = models.CharField(_("Title name"),blank=True, max_length=250, help_text=_("Input the name given to the resource."))
     complete_text = models.TextField(_("Raw Text"), blank=True, help_text=_("Complete text of the book."))
     parsed_tokens = models.TextField(_("Tokens"), blank=True, help_text=_("Input tokens separated by a comma"))
+    vector_file = models.FileField(upload_to="vectors_file", blank=True, null=True, help_text=_("Field to save a vector"))
 
     class Meta:
         verbose_name = "Ranked Title"

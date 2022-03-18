@@ -1,5 +1,4 @@
-from importlib.metadata import distribution
-from importlib.util import resolve_name
+
 import io
 import json
 import os
@@ -13,6 +12,7 @@ import sagemaker.amazon.common as smac
 
 # Django Imports
 from django.conf import settings
+from django.core.files import File
 
 # Django Rest Imports
 from rest_framework import authentication, status
@@ -21,7 +21,7 @@ from rest_framework.views import APIView
 
 # Import Utils
 from recommender.services import Boto3FileDownload
-from recommender.utils import MapTitleTextJSONFiles, LTokenizer, _get_spanish_stop_words
+from recommender.utils import MapTitleTextJSONFiles, LTokenizer, S3SessionMakerMixin
 from recommender._stop_words_sp import SPANISH_WORDS as spanish_words
 
 # Note: This can be change to another service, for the purpose
@@ -33,7 +33,6 @@ from recommender.models import Title
 
 # Scikit Import
 from sklearn.feature_extraction.text import CountVectorizer
-# from sklearn.externals import joblib
 
 # SageMaker Estimator
 import sagemaker
@@ -46,7 +45,7 @@ VOCAB_SIZE = 2000
 SAGEMAKER_BUCKET = "sagemaker-erecommender"
 PROFILE_NAME = "prod"
 PREFIX = "recommender"
-NUM_TOPICS=30
+NUM_TOPICS=50
 
 
 class DownloadTitles(APIView):
@@ -134,7 +133,7 @@ class GetTextJSONFiles(APIView):
         return Response({"status": "OK"}, status=status.HTTP_200_OK)
 
 
-class PrepareTrainData(APIView):
+class PrepareTrainData(APIView, S3SessionMakerMixin):
     def post(self, request):
         body = json.loads(request.body)
         book_limit = body.get("book_limit", 0)
@@ -151,21 +150,22 @@ class PrepareTrainData(APIView):
             max_df=0.95,
             min_df=2
         )
-        print("Started Tokenization")
-        titles = self._get_titles_text(book_limit, list_keys, theme_filter)
-        print(f"Titles length -> {len(titles)}")
+        queryset = self._get_title_queryset(book_limit, list_keys, theme_filter)
+        titles = self._get_titles_text(queryset)
+
         print("Transform!")
+        print("Started Tokenization...")
         vectors = vectorizer.fit_transform(titles)
         vocab_list = vectorizer.get_feature_names_out()
-        print('vocab size:', len(vocab_list))
 
-        print("Show me vocab list")
-        print(type(vocab_list))
+        # save numpy array
+        np.savetxt(f'{settings.BOOK_PATH}/vocab_list.csv', vocab_list, fmt='%s')
 
         # random shuffle
         index = np.arange(vectors.shape[0])
-        
+        np.savetxt(f'{settings.BOOK_PATH}/index.csv', index, fmt='%s')
         new_index = np.random.permutation(index)
+        np.savetxt(f'{settings.BOOK_PATH}/new_index.csv', new_index, fmt='%s')
 
         # Need to store these permutations:
         vectors = vectors[new_index]
@@ -173,6 +173,8 @@ class PrepareTrainData(APIView):
         # Need to save the vector
         print("Saving vector in book path for later use.")
         joblib.dump(vectors, f"{settings.BOOK_PATH}/vectors.joblib")
+
+        self._map_vectors_titles(vectors=vectors, queryset=queryset)
 
         # TODO > log this instead of printing it.
         enlapse_time = time.time() - start_time
@@ -190,8 +192,7 @@ class PrepareTrainData(APIView):
 
         print(train_vectors.shape,val_vectors.shape)
 
-
-        #define paths
+        # Define paths
         bucket = SAGEMAKER_BUCKET
         prefix = PREFIX
 
@@ -207,39 +208,74 @@ class PrepareTrainData(APIView):
         print('Trained model will be saved at', output_path)
 
         # Split the training and validation vectors
-        # self._split_convert_upload(
-        #    train_vectors, bucket_name=bucket, prefix=train_prefix, fname_template='train_part{}.pbr', n_parts=8)
-        # self._split_convert_upload(
-        #    val_vectors, bucket_name=bucket, prefix=val_prefix, fname_template='val_part{}.pbr', n_parts=1)
+        self._split_convert_upload(
+            train_vectors, bucket_name=bucket, prefix=train_prefix, fname_template='train_part{}.pbr', n_parts=8)
+        self._split_convert_upload(
+            val_vectors, bucket_name=bucket, prefix=val_prefix, fname_template='val_part{}.pbr', n_parts=1)
+        
+        response = {
+            "status": "Ok",
+            "paths": {
+                "s3_train_data": s3_train_data,
+                "s3_val_data": s3_val_data,
+                "output_path": output_path
+            },
+            "vectors_path": f"{settings.BOOK_PATH}/vectors.joblib",
+            "vocab_list": f"{settings.BOOK_PATH}/vocab_list.csv",
+            "index": f'{settings.BOOK_PATH}/index.csv',
+            "new_index": f'{settings.BOOK_PATH}/new_index.csv'
+        }
+        
+        return Response(response, status=status.HTTP_200_OK)
 
-        return Response({"status": "OK"}, status=status.HTTP_200_OK)
+    def _map_vectors_titles(self, vectors, queryset) -> None:
+        """
+        Function that assigns the right vector file to the title.
+        :param vectors <ndarray>:
+        :param queryset Title:
+        :return None:
+        """
+        print("Starting vectors assignment to Titles...")
+        item_counter = 0
+        vectors = np.array(vectors.todense())
+        for item in queryset:
+            np.savetxt(
+                f'{settings.BOOK_PATH}/{item.identifier}/vector_file.csv', vectors[item_counter], fmt='%s')
+            local_file = open(f'{settings.BOOK_PATH}/{item.identifier}/vector_file.csv')
+            parsed_file = File(local_file)
+            item.vector_file.save('vector_file.csv', parsed_file)
+            local_file.close()
+            item_counter += 1
+    
+        print("Ended vectors assignment to Titles...")
 
-    def _get_titles_text(self, book_limit, list_keys, theme_filter) -> list:
-        """
-        Function to create a list of text of the books mapped in the service
-        :param book_limit int:
-        :param list_keys  list:
-        :param theme_filter str:
-        :return list:
-        """
-        compiled_text = []
+    def _get_title_queryset(self, book_limit, list_keys, theme_filter):
         if len(list_keys) > 0:
-            titles = Title.objects.filter(identifier__in=list_keys)
+            titles = Title.objects.filter(identifier__in=list_keys).exclude(complete_text=u'').order_by("-pk")
         elif theme_filter:
-            titles = Title.objects.filter(theme=theme_filter)
+            titles = Title.objects.filter(theme=theme_filter).exclude(complete_text=u'').order_by("-pk")
         else:
             titles = Title.objects.all().exclude(complete_text=u'').order_by("-pk")
         if book_limit > 0:
             titles = titles[:book_limit]
-            print(f"Amount of titles -> {titles.count()}")
-        for title in titles:
+        print(f"Count of queryset -> {titles.count()}")
+        return titles
+
+    def _get_titles_text(self, queryset) -> list:
+        """
+        Function to create a list of text of the books mapped in the service
+        :param queryset Title :
+        :return list:
+        """
+        compiled_text = []
+        for title in queryset:
             if not title.complete_text == "":
                 compiled_text.append(title.complete_text)
         return compiled_text
 
     def _split_convert_upload(self, sparray, bucket_name, prefix, fname_template='data_part{}.pbr', n_parts=2):
         chunk_size = sparray.shape[0]// n_parts
-        prod = boto3.Session(profile_name=PROFILE_NAME, region_name="us-west-1")
+        prod = self._get_boto_session()
         s3 = prod.resource('s3')
         bucket = s3.Bucket(bucket_name)
         for i in range(n_parts):
@@ -260,92 +296,65 @@ class PrepareTrainData(APIView):
             print('Uploaded data to s3://{}'.format(os.path.join(bucket_name, fname)))
 
 
-class CreateNTMEstimator(APIView):
+class CreateNTMEstimator(APIView, S3SessionMakerMixin):
     def post(self, request):
-        # Need the current vector
-        vectors = self._get_vector()
-        new_index = 0
-        vocab_list = []
         # Pulling the ntm image in the current region
-        prd = boto3.Session(profile_name=PROFILE_NAME, region_name="us-west-1")
-        role = get_execution_role()
-        container = get_image_uri(prd.region_name, 'ntm')
+        role, session = self._get_profile_role()
+        container = get_image_uri(session.region_name, 'ntm')
+        body = json.loads(request.body)
+        request_status = status.HTTP_200_OK
+        # Create Estimator
+        print("Starting Estimator Creation")
+        try:
+            session = sagemaker.Session(boto_session=session)
+            ntm = sagemaker.estimator.Estimator(
+                container,
+                role,
+                train_instance_count=2,
+                train_instance_type="ml.c5.xlarge",
+                output_path=body["paths"]["output_path"],
+                sagemaker_session=session
+            )
+            # set the hyperparameters for the topic model
+            ntm.set_hyperparameters(
+                num_topics=NUM_TOPICS,
+                feature_dim=VOCAB_SIZE,
+                mini_batch_size=128, 
+                epochs=100,
+                num_patience_epochs=5,
+                tolerance=0.001
+            )
+            s3_train = s3_input(body["paths"]["s3_train_data"], distribution="ShardedByS3Key")
+            ntm.fit({'train': s3_train, 'test': body["paths"]["s3_val_data"]})
+            ntm_predictor = ntm.deploy(initial_instance_count=1, instance_type='ml.c5.xlarge')
+            print(ntm_predictor.__dict__)
+            endpoint = ntm_predictor.__dict__["endpoint"]
+        except Exception as e:
+            response = {
+                "status": "ERROR",
+                "error": str(e.args[0])
+            }
+            request_status = status.HTTP_400_BAD_REQUEST
+            ntm_predictor.delete_endpoint()
+            return Response(response, status=request_status)
 
-        # TODO > add the following lines as response for the train data endpoint 
-        #define paths
-        bucket = SAGEMAKER_BUCKET
-        prefix = PREFIX
-
-        train_prefix = os.path.join(prefix, 'train')
-        val_prefix = os.path.join(prefix, 'val')
-        output_prefix = os.path.join(prefix, 'output')
-
-        s3_train_data = os.path.join('s3://', bucket, train_prefix)
-        s3_val_data = os.path.join('s3://', bucket, val_prefix)
-        output_path = os.path.join('s3://', bucket, output_prefix)
-        # End of paths
-        session = sagemaker.Session()
-        ntm = sagemaker.estimator.Estimator(
-            container,
-            role,
-            train_instance_count=2,
-            train_instance_type="ml.c5.xlarge",
-            output_path=output_path,
-            sagemaker_session=session
-
-        )
-        # set the hyperparameters for the topic model
-        ntm.set_hyperparameters(
-            num_topics=NUM_TOPICS,
-            feature_dim=VOCAB_SIZE,
-            mini_batch_size=128, 
-            epochs=100,
-            num_patience_epochs=5,
-            tolerance=0.001
-        )
-        s3_train = s3_input(s3_train_data, distribution="ShardedByS3Key")
-        ntm.fit({'train': s3_train, 'test': s3_val_data})
-
-        ntm_predictor = ntm.deploy(initial_instance_count=1, instance_type='ml.c5.xlarge')
-        ntm_predictor.content_type = 'text/csv'
-        ntm_predictor.serializer = csv_serializer
-        ntm_predictor.deserializer = json_deserializer
-
-        predictions = []
-        for item in np.array(vectors.todense()):
-            np.shape(item)
-            results = ntm_predictor.predict(item)
-            predictions.append(np.array([prediction['topic_weights'] for prediction in results['predictions']]))
-            predictions = np.array([np.ndarray.flatten(x) for x in predictions])
+        # Response body in case everything ran smooth
+        response = {
+            "status": "Ok",
+            "predictor": endpoint,
+            "paths": body["paths"],
+            "vectors_path": body["vectors_path"],
+            "vocab_list": body["vocab_list"],
+            "index": body["index"],
+            "new_index": body["new_index"]
+            
+        }
         
-        print("Show me results:")
-        print(results)
-
-        print("Show me one result")
-        print(predictions[-1])
-
-        print("Show me vectors shape")
-        print(vectors.shape)
-
-        print("Show me predictions shape")
-        print(predictions.shape)
-
-        print("Show me newidx shape")
-        print(new_index.shape)
-
-        print("Show me vocab list")
-        print(len(vocab_list))
-
-        topicvec = np.argmax(predictions, axis=1)
-        topicnames = [vocab_list[x] for x in topicvec]
-        print("Show me topicnames")
-        print(topicnames)
+        return Response(response, status=request_status)
 
 
-        return Response({"status": "OK"}, status=status.HTTP_200_OK)
-    
-    def _get_vector(self):
-        vectors = joblib.load(f"{settings.BOOK_PATH}/vectors.joblib")
-        vectors = sparse.csr_matrix(vectors, dtype=np.float32)
-        n_train = int(0.8 * vectors.shape[0])
-        return 
+class GetPredictorInformation(APIView):
+    def post(self, request):
+        body = json.loads(request.body)
+
+        return Response({"status": "Ok"}, status=status.HTTP_200_OK)

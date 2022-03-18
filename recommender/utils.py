@@ -7,9 +7,13 @@ import random
 import requests
 import stanza
 import numpy as np
+import boto3
 import unicodedata
 
 from pathlib import Path
+
+# SageMaker
+from sagemaker import get_execution_role
 
 # Other Imports
 from recommender._stop_words_sp import SPANISH_WORDS
@@ -18,6 +22,7 @@ from recommender._stop_words_sp import SPANISH_WORDS
 FORMAT = 'utf8'
 
 TYPE_UPOS = ['NOUN', 'PRON', 'PROPN', 'ADV', 'ADJ']
+PROFILE_NAME = "prod"
 
 
 def _get_spanish_stop_words(unaccented: bool=True) -> list:
@@ -122,3 +127,28 @@ class TokenAuth(requests.auth.AuthBase):
     def __call__(self, r):
         r.headers["Authorization"] = f"Token {self._auth_token}"
         return r
+
+
+class S3SessionMakerMixin:
+    """
+    Mixin created to help handle the creation of boto Sessions and roles
+    """
+
+    def _get_boto_session(self):
+        return boto3.Session(profile_name=PROFILE_NAME, region_name="us-west-1")
+
+    def _get_profile_role(self):
+        """
+        Function to fetch the right role to interact with Sagemaker
+        :return sagemaker role:
+        :return boto3 session:
+        """
+        role = ""
+        session = ""
+        try:
+            role = get_execution_role()
+        except ValueError:
+            session = boto3.Session(profile_name=PROFILE_NAME, region_name="us-west-1")
+            iam = session.client('iam')
+            role = iam.get_role(RoleName='SageMakerRole')['Role']['Arn']
+        return role, session
