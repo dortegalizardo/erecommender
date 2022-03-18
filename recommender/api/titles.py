@@ -327,7 +327,6 @@ class CreateNTMEstimator(APIView, S3SessionMakerMixin):
             s3_train = s3_input(body["paths"]["s3_train_data"], distribution="ShardedByS3Key")
             ntm.fit({'train': s3_train, 'test': body["paths"]["s3_val_data"]})
             ntm_predictor = ntm.deploy(initial_instance_count=1, instance_type='ml.c5.xlarge')
-            print(ntm_predictor.__dict__)
             endpoint = ntm_predictor.__dict__["endpoint"]
         except Exception as e:
             response = {
