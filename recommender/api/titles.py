@@ -150,8 +150,8 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
             max_df=0.95,
             min_df=2
         )
-        queryset = self._get_title_queryset(book_limit, list_keys, theme_filter)
-        titles = self._get_titles_text(queryset)
+        titles_train, titles_test = self._get_title_queryset(book_limit, list_keys, theme_filter)
+        titles = self._get_titles_text(titles_train)
 
         print("Transform!")
         print("Started Tokenization...")
@@ -174,7 +174,8 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
         print("Saving vector in book path for later use.")
         joblib.dump(vectors, f"{settings.BOOK_PATH}/vectors.joblib")
 
-        self._map_vectors_titles(vectors=vectors, queryset=queryset)
+        # Map vectors to training titles
+        self._map_vectors_titles(vectors=vectors, queryset=titles_train)
 
         # TODO > log this instead of printing it.
         enlapse_time = time.time() - start_time
@@ -212,6 +213,16 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
             train_vectors, bucket_name=bucket, prefix=train_prefix, fname_template='train_part{}.pbr', n_parts=8)
         self._split_convert_upload(
             val_vectors, bucket_name=bucket, prefix=val_prefix, fname_template='val_part{}.pbr', n_parts=1)
+
+        # Now create vectors for testing_titles
+        titles = self._get_titles_text(titles_test)
+        test_vectors = vectorizer.fit_transform(titles)
+
+        # Save test_vectors on book path for later use.
+        joblib.dump(test_vectors, f"{settings.BOOK_PATH}/test_vectors.joblib")
+
+        # Map vectors to testing titles
+        self._map_vectors_titles(vectors=test_vectors, queryset=titles_test)
         
         response = {
             "status": "Ok",
@@ -220,6 +231,7 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
                 "s3_val_data": s3_val_data,
                 "output_path": output_path
             },
+            "test_vectors_path": f"{settings.BOOK_PATH}/test_vectors.joblib",
             "vectors_path": f"{settings.BOOK_PATH}/vectors.joblib",
             "vocab_list": f"{settings.BOOK_PATH}/vocab_list.csv",
             "index": f'{settings.BOOK_PATH}/index.csv',
@@ -258,8 +270,22 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
             titles = Title.objects.all().exclude(complete_text=u'').order_by("-pk")
         if book_limit > 0:
             titles = titles[:book_limit]
+        
+        # Need to separate the books into training and testing data points
+        count=1
+        for_train = []
+        for_test = []
+        for item in titles:
+            if count < int(titles.count()*0.60):
+                for_train.append(item)
+            else:
+                for_test.append(item)
+            count+=1
+
         print(f"Count of queryset -> {titles.count()}")
-        return titles
+        print(f"Count of train -> {len(for_train)}")
+        print(f"Count of test -> {len(for_test)}")
+        return for_train, for_test
 
     def _get_titles_text(self, queryset) -> list:
         """
@@ -342,18 +368,65 @@ class CreateNTMEstimator(APIView, S3SessionMakerMixin):
             "status": "Ok",
             "predictor": endpoint,
             "paths": body["paths"],
+            "test_vectors_path": body["test_vectors_path"],
             "vectors_path": body["vectors_path"],
             "vocab_list": body["vocab_list"],
             "index": body["index"],
             "new_index": body["new_index"]
             
         }
-        
         return Response(response, status=request_status)
 
 
-class GetPredictorInformation(APIView):
+class GetPredictorInformation(APIView, S3SessionMakerMixin):
     def post(self, request):
         body = json.loads(request.body)
+        role, session = self._get_profile_role()
+        vectors_path = body["vectors_path"]
+        vocab_list = np.loadtxt(body["vocab_list"],  dtype='str')
+        index = np.loadtxt(body["index"],  dtype='int')
+        new_index = np.loadtxt(body["new_index"],  dtype='int')
+        vectors = self._get_vector(vectors_path)
+        predictor_endpoint = body["predictor"]
+        predictions = []
+        sagemaker_session = sagemaker.Session(boto_session=session)
+        try:
+            ntm_predictor = sagemaker.predictor.RealTimePredictor(
+                endpoint=predictor_endpoint,
+                sagemaker_session=sagemaker_session
+            )
+            ntm_predictor.content_type = 'text/csv'
+            ntm_predictor.serializer = csv_serializer
+            ntm_predictor.deserializer = json_deserializer
+        except Exception as e:
+            print(e)
+        
+        for item in np.array(vectors.todense()):
+            np.shape(item)
+            results = ntm_predictor.predict(item)
+            predictions.append(np.array([prediction['topic_weights'] for prediction in results['predictions']]))
+        
+        predictions = np.array([np.ndarray.flatten(x) for x in predictions])
+        np.savetxt(f'{settings.BOOK_PATH}/predictions.csv', new_index, fmt='%s')
 
+        response = {
+            "status": "Ok",
+            "predictor": predictor_endpoint,
+            "paths": body["paths"],
+            "test_vectors_path": body["test_vectors_path"],
+            "vectors_path": body["vectors_path"],
+            "vocab_list": body["vocab_list"],
+            "index": body["index"],
+            "new_index": body["new_index"],
+            "predictions": f'{settings.BOOK_PATH}/predictions.csv'    
+        }
         return Response({"status": "Ok"}, status=status.HTTP_200_OK)
+    
+    def _get_vector(self, vectors_path):
+        """
+        Function that gets the vectors file and loads it into memory
+        :return vector -> scipy matrix:
+        """
+        vectors = joblib.load(vectors_path)
+        vectors = sparse.csr_matrix(vectors, dtype=np.float32)
+        return vectors

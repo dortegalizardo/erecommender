@@ -11,5 +11,6 @@ urlpatterns = [
     path("maptitleinfo/", api_views.MapTitleInformation.as_view(), name="map-title-info"),
     path("mapjsoninfo/", api_views.GetTextJSONFiles.as_view(), name="map-json-files"),
     path("prepare_data/", api_views.PrepareTrainData.as_view(), name="prepare-data"),
-    path("create_estimator/", api_views.CreateNTMEstimator.as_view(), name="create-estimator")
+    path("create_estimator/", api_views.CreateNTMEstimator.as_view(), name="create-estimator"),
+    path("get_prediction/", api_views.GetPredictorInformation.as_view(), name="get-prediction")
 ]
