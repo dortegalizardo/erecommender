@@ -1,7 +1,34 @@
 
+import uuid
+
 # Django Imports
 from django.db import models
 from django.utils.translation import gettext_lazy as _
+
+
+def upload_path(instance, filename):
+    return '{0}/{1}'.format(instance.uuid, filename)
+
+
+class Workflow(models.Model):
+    uuid_identifier = models.UUIDField(editable=False, default=uuid.uuid4, unique=True)
+    index = models.FileField(upload_to=upload_path, blank=True, null=True, help_text=_("Insert the calculated index."))
+    new_index = models.FileField(upload_to=upload_path, blank=True, null=True, help_text=_("Insert the calculated new index.") )
+    training_vectors = models.FileField(upload_to=upload_path, blank=True, null=True, help_text=_("Insert the calculated training_vectors."))
+    vocab_list = models.FileField(upload_to=upload_path, blank=True, null=True, help_text=_("Insert the calculated vocabulary list."))
+    topic_predictions = models.FileField(upload_to=upload_path, blank=True, null=True, help_text=_("Insert topic predictions csv"))
+    training_book_ids = models.TextField(blank=True, help_text=_("Insert the book ids for this flow separated by a comma."))
+    ntm_predictor_endpoint = models.TextField(blank=True, help_text=_("Insert the NTM predictor endpoint."))
+    knn_predictor_endpoint = models.TextField(blank=True, help_text=_("Insert the KNN predictor endpoint."))
+    number_books = models.IntegerField(default=0, blank=True, help_text=_("Amount of books for this workflow."))
+    s3_paths = models.JSONField(blank=True, help_text=_("Field saved for a small dictionary of S3 paths."))
+
+    def __str__(self):
+        return f"Workflow: {self.uuid_identifier} - {self.number_books} books."
+
+    class Meta:
+        verbose_name = "Workflow"
+        verbose_name_plural = "Workflows"
 
 
 class Title(models.Model):
@@ -12,6 +39,7 @@ class Title(models.Model):
     complete_text = models.TextField(_("Raw Text"), blank=True, help_text=_("Complete text of the book."))
     parsed_tokens = models.TextField(_("Tokens"), blank=True, help_text=_("Input tokens separated by a comma"))
     vector_file = models.FileField(upload_to="vectors_file", blank=True, null=True, help_text=_("Field to save a vector"))
+    number_pages = models.IntegerField(_("Number of pages"), default=0, help_text=_("Input the amount of pages of the book."))
 
     class Meta:
         verbose_name = "Ranked Title"

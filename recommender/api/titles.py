@@ -46,6 +46,7 @@ SAGEMAKER_BUCKET = "sagemaker-erecommender"
 PROFILE_NAME = "prod"
 PREFIX = "recommender"
 NUM_TOPICS=50
+NUM_NEIGHBORS=5
 
 
 class DownloadTitles(APIView):
@@ -158,6 +159,9 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
         vectors = vectorizer.fit_transform(titles)
         vocab_list = vectorizer.get_feature_names_out()
 
+        # Map vectors to training titles
+        self._map_vectors_titles(vectors=vectors, queryset=titles_train)
+
         # save numpy array
         np.savetxt(f'{settings.BOOK_PATH}/vocab_list.csv', vocab_list, fmt='%s')
 
@@ -173,9 +177,6 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
         # Need to save the vector
         print("Saving vector in book path for later use.")
         joblib.dump(vectors, f"{settings.BOOK_PATH}/vectors.joblib")
-
-        # Map vectors to training titles
-        self._map_vectors_titles(vectors=vectors, queryset=titles_train)
 
         # TODO > log this instead of printing it.
         enlapse_time = time.time() - start_time
@@ -404,10 +405,11 @@ class GetPredictorInformation(APIView, S3SessionMakerMixin):
         for item in np.array(vectors.todense()):
             np.shape(item)
             results = ntm_predictor.predict(item)
+            print(results)
             predictions.append(np.array([prediction['topic_weights'] for prediction in results['predictions']]))
         
         predictions = np.array([np.ndarray.flatten(x) for x in predictions])
-        np.savetxt(f'{settings.BOOK_PATH}/predictions.csv', new_index, fmt='%s')
+        np.savetxt(f'{settings.BOOK_PATH}/predictions.csv', predictions, fmt='%s')
 
         response = {
             "status": "Ok",
@@ -420,7 +422,7 @@ class GetPredictorInformation(APIView, S3SessionMakerMixin):
             "new_index": body["new_index"],
             "predictions": f'{settings.BOOK_PATH}/predictions.csv'    
         }
-        return Response({"status": "Ok"}, status=status.HTTP_200_OK)
+        return Response(response, status=status.HTTP_200_OK)
     
     def _get_vector(self, vectors_path):
         """
@@ -430,3 +432,107 @@ class GetPredictorInformation(APIView, S3SessionMakerMixin):
         vectors = joblib.load(vectors_path)
         vectors = sparse.csr_matrix(vectors, dtype=np.float32)
         return vectors
+
+
+class CreateKNNEstimator(APIView, S3SessionMakerMixin):
+
+    def post(self, request):
+        body = json.loads(request.body)
+        role, session = self._get_profile_role()
+        vectors_path = body["vectors_path"]
+        test_vector_path = body["test_vectors_path"]
+        vocab_list = np.loadtxt(body["vocab_list"],  dtype='str')
+        index = np.loadtxt(body["index"],  dtype='int')
+        new_index = np.loadtxt(body["new_index"],  dtype='int')
+        # vectors = self._get_vector(vectors_path)
+        predictor_endpoint = body["predictor"]
+        predictions = np.loadtxt(body["predictions"],  dtype='float')
+        print(predictions)
+        
+        # Starting configuration process
+        labels = new_index 
+        labeldict = dict(zip(new_index,index))
+        print('train_features shape = ', predictions.shape)
+        print('train_labels shape = ', labels.shape)
+        
+        buf = io.BytesIO()
+        smac.write_numpy_to_dense_tensor(buf, predictions, labels)
+        buf.seek(0)
+
+        bucket_name = SAGEMAKER_BUCKET
+        prefix = PREFIX
+        key = 'knn/train'
+
+        # Uploading training data to knn/train
+        prod = self._get_boto_session()
+        s3 = prod.resource('s3')
+        bucket = s3.Bucket(bucket_name)
+
+        fname = os.path.join(prefix, key)
+        bucket.Object(fname).upload_fileobj(buf)
+        # boto3.resource('s3').Bucket(bucket).Object(fname).upload_fileobj(buf)
+        s3_train_data = 's3://{}/{}/{}'.format(bucket_name, prefix, key)
+        print('uploaded training data location: {}'.format(s3_train_data))
+
+        # Setting an output path
+        output_path = 's3://' + bucket_name + '/' + prefix + '/knn/output'
+        
+        hyperparams = {
+            'feature_dim': predictions.shape[1],
+            'k': NUM_NEIGHBORS,
+            'sample_size': predictions.shape[0],
+            'predictor_type': 'classifier' ,
+            'index_metric':'COSINE'
+        }
+        
+        try:
+            session = sagemaker.Session(boto_session=session)
+            knn = sagemaker.estimator.Estimator(get_image_uri(boto3.Session().region_name, "knn"),
+                role,
+                train_instance_count=1,
+                train_instance_type='ml.c5.xlarge',
+                output_path=output_path,
+                sagemaker_session=session)
+            knn.set_hyperparameters(**hyperparams)
+    
+            # train a model. fit_input contains the locations of the train and test data
+            fit_input = {'train': s3_train_data}
+            knn.fit(fit_input)
+
+            instance_type = 'ml.c5.xlarge'
+            model_name = 'knn_%s'% instance_type
+            endpoint_name = 'knn-ml-c5-xlarge-%s'% (str(time.time()).replace('.','-'))
+        
+            print('setting up the endpoint...')
+
+            knn_predictor = knn.deploy(initial_instance_count=1, instance_type=instance_type,
+                                        endpoint_name=endpoint_name,
+                                        accept="application/jsonlines; verbose=true")
+            knn_predictor.content_type = 'text/csv'
+            knn_predictor.serializer = csv_serializer
+            knn_predictor.deserializer = json_deserializer
+        except Exception as e:
+            print(e)
+        
+        test_vectors = joblib.load(test_vector_path)
+        test_vectors = np.array(test_vectors.todense())
+
+        for vec in test_vectors:
+            test_result = knn_predictor.predict(vec)
+            print(test_result)        
+
+        # Response body in case everything ran smooth
+        response = {
+            "status": "Ok",
+            "predictor": body["predictor"],
+            "paths": body["paths"],
+            "test_vectors_path": body["test_vectors_path"],
+            "vectors_path": body["vectors_path"],
+            "vocab_list": body["vocab_list"],
+            "index": body["index"],
+            "new_index": body["new_index"],
+            "knn_predictor": endpoint_name
+            
+        }
+
+        return Response(response)

@@ -90,9 +90,9 @@ class MapTitleTextJSONFiles:
         amount_keys = len(summary)
         random_keys = list(range(amount_keys)) 
         random.shuffle(random_keys)
-        if amount_keys < 10:
+        if amount_keys < 15:
             return random_keys
-        return random_keys[0:10]
+        return random_keys[0:15]
 
     def _string_merge(self, summary: any, random_keys: list) -> str:
         '''

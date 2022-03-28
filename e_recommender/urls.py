@@ -9,7 +9,6 @@ from recommender import views as rviews
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/", include("recommender.api.urls")),
-    # path('populate_titles/', rviews.MostViewedTitlesView.as_view(), name="populate_titles")
 ]
 
 if settings.DEBUG:
