@@ -1,4 +1,5 @@
 
+from fileinput import filename
 import io
 import json
 import os
@@ -29,7 +30,10 @@ from recommender._stop_words_sp import SPANISH_WORDS as spanish_words
 from recommender.content_service import get_service
 
 # Model Imports
-from recommender.models import Title
+from recommender.models import Title, Workflow
+
+# Serializers Import
+from recommender.serializers import WorkflowSerializer
 
 # Scikit Import
 from sklearn.feature_extraction.text import CountVectorizer
@@ -135,12 +139,25 @@ class GetTextJSONFiles(APIView):
 
 
 class PrepareTrainData(APIView, S3SessionMakerMixin):
+
+    serializer_class = WorkflowSerializer
+
     def post(self, request):
+        # Get data from request
         body = json.loads(request.body)
         book_limit = body.get("book_limit", 0)
         list_keys = body.get("list_keys", [])
         theme_filter = body.get("theme", None)
         start_time = time.time()
+
+        # Create Worflow
+        workflow = Workflow()
+        workflow.save()
+        try:
+            os.mkdir(f'{settings.BOOK_PATH}/{workflow.pk}/')
+        except FileExistsError:
+            print("File already exists!")
+
         print("Started Token Vectorization!")
         vectorizer = CountVectorizer(
             input="content",
@@ -151,7 +168,7 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
             max_df=0.95,
             min_df=2
         )
-        titles_train, titles_test = self._get_title_queryset(book_limit, list_keys, theme_filter)
+        titles_train = self._get_title_queryset(book_limit, list_keys, theme_filter)
         titles = self._get_titles_text(titles_train)
 
         print("Transform!")
@@ -163,23 +180,43 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
         self._map_vectors_titles(vectors=vectors, queryset=titles_train)
 
         # save numpy array
-        np.savetxt(f'{settings.BOOK_PATH}/vocab_list.csv', vocab_list, fmt='%s')
+        np.savetxt(f'{settings.BOOK_PATH}/{workflow.pk}/vocab_list.csv', vocab_list, fmt='%s')
+        self._assign_file_worklfow(
+            file_path=f'{settings.BOOK_PATH}/{workflow.pk}/vocab_list.csv',
+            file_name="vocab_list.csv",
+            field=workflow.vocab_list
+        )
 
         # random shuffle
         index = np.arange(vectors.shape[0])
-        np.savetxt(f'{settings.BOOK_PATH}/index.csv', index, fmt='%s')
+        np.savetxt(f'{settings.BOOK_PATH}/{workflow.pk}/index.csv', index, fmt='%s')
+        self._assign_file_worklfow(
+            file_path=f'{settings.BOOK_PATH}/{workflow.pk}/index.csv',
+            file_name="index.csv",
+            field=workflow.index
+        )
+
         new_index = np.random.permutation(index)
-        np.savetxt(f'{settings.BOOK_PATH}/new_index.csv', new_index, fmt='%s')
+        np.savetxt(f'{settings.BOOK_PATH}/{workflow.pk}/new_index.csv', new_index, fmt='%s')
+        self._assign_file_worklfow(
+            file_path=f'{settings.BOOK_PATH}/{workflow.pk}/new_index.csv',
+            file_name="new_index.csv",
+            field=workflow.new_index
+        )
 
         # Need to store these permutations:
         vectors = vectors[new_index]
 
         # Need to save the vector
         print("Saving vector in book path for later use.")
-        joblib.dump(vectors, f"{settings.BOOK_PATH}/vectors.joblib")
+        joblib.dump(vectors, f"{settings.BOOK_PATH}/{workflow.pk}/vectors.joblib")
+        workflow.training_vectors = f"{settings.BOOK_PATH}/{workflow.pk}/vectors.joblib"
+        workflow.save()
 
-        # TODO > log this instead of printing it.
         enlapse_time = time.time() - start_time
+        workflow.processing_times = {"training_vectors_time": enlapse_time}
+        workflow.save()
+
         print('Done. Time elapsed: {:.2f}s'.format(enlapse_time))
 
         vectors = sparse.csr_matrix(vectors, dtype=np.float32)
@@ -194,9 +231,9 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
 
         print(train_vectors.shape,val_vectors.shape)
 
-        # Define paths
+        # Define paths for training data
         bucket = SAGEMAKER_BUCKET
-        prefix = PREFIX
+        prefix = f"{PREFIX}-WORKFLOW-{workflow.pk}"
 
         train_prefix = os.path.join(prefix, 'train')
         val_prefix = os.path.join(prefix, 'val')
@@ -209,37 +246,24 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
         print('Validation set location', s3_val_data)
         print('Trained model will be saved at', output_path)
 
+        workflow.s3_paths = {
+            "training":
+            {
+                "s3_train_data": s3_train_data,
+                "s3_val_data": s3_val_data,
+                "output_path": output_path
+            }
+        }
+        workflow.save()
+
         # Split the training and validation vectors
         self._split_convert_upload(
             train_vectors, bucket_name=bucket, prefix=train_prefix, fname_template='train_part{}.pbr', n_parts=8)
         self._split_convert_upload(
             val_vectors, bucket_name=bucket, prefix=val_prefix, fname_template='val_part{}.pbr', n_parts=1)
 
-        # Now create vectors for testing_titles
-        titles = self._get_titles_text(titles_test)
-        test_vectors = vectorizer.fit_transform(titles)
-
-        # Save test_vectors on book path for later use.
-        joblib.dump(test_vectors, f"{settings.BOOK_PATH}/test_vectors.joblib")
-
-        # Map vectors to testing titles
-        self._map_vectors_titles(vectors=test_vectors, queryset=titles_test)
-        
-        response = {
-            "status": "Ok",
-            "paths": {
-                "s3_train_data": s3_train_data,
-                "s3_val_data": s3_val_data,
-                "output_path": output_path
-            },
-            "test_vectors_path": f"{settings.BOOK_PATH}/test_vectors.joblib",
-            "vectors_path": f"{settings.BOOK_PATH}/vectors.joblib",
-            "vocab_list": f"{settings.BOOK_PATH}/vocab_list.csv",
-            "index": f'{settings.BOOK_PATH}/index.csv',
-            "new_index": f'{settings.BOOK_PATH}/new_index.csv'
-        }
-        
-        return Response(response, status=status.HTTP_200_OK)
+        serialize_data = WorkflowSerializer(workflow, many=False).data
+        return Response(serialize_data, status=status.HTTP_200_OK)
 
     def _map_vectors_titles(self, vectors, queryset) -> None:
         """
@@ -262,6 +286,21 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
     
         print("Ended vectors assignment to Titles...")
 
+    def _assign_file_worklfow(self, file_path: str, file_name:str, field: any) -> None:
+        """
+        Function that saves files for a particular workflow
+        :param file_path str:
+        :param file_name str:
+        :param field Workflow field:
+        :return None:
+        """
+        print(file_name)
+        local_file = open(file_path)
+        parsed_file = File(local_file)
+        field.save(file_name, parsed_file)
+        local_file.close()
+        return None
+
     def _get_title_queryset(self, book_limit, list_keys, theme_filter):
         if len(list_keys) > 0:
             titles = Title.objects.filter(identifier__in=list_keys).exclude(complete_text=u'').order_by("-pk")
@@ -271,22 +310,7 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
             titles = Title.objects.all().exclude(complete_text=u'').order_by("-pk")
         if book_limit > 0:
             titles = titles[:book_limit]
-        
-        # Need to separate the books into training and testing data points
-        count=1
-        for_train = []
-        for_test = []
-        for item in titles:
-            if count < int(titles.count()*0.60):
-                for_train.append(item)
-            else:
-                for_test.append(item)
-            count+=1
-
-        print(f"Count of queryset -> {titles.count()}")
-        print(f"Count of train -> {len(for_train)}")
-        print(f"Count of test -> {len(for_test)}")
-        return for_train, for_test
+        return titles
 
     def _get_titles_text(self, queryset) -> list:
         """

@@ -2,7 +2,7 @@
 from django.contrib import admin
 
 # Model Imports
-from recommender.models import Title, Recommendation, RecommendationRating
+from recommender.models import Title, Recommendation, Workflow
 
 
 @admin.register(Title)
@@ -16,4 +16,10 @@ class TitleAdmin(admin.ModelAdmin):
 @admin.register(Recommendation)
 class RecommendationAdmin(admin.ModelAdmin):
     list_display = ("title", "recommendation",)
-    list_display = ("title",)
+    list_display_links = ("title",)
+
+
+@admin.register(Workflow)
+class WorkflowAdmin(admin.ModelAdmin):
+    list_display = ("uuid_identifier",)
+    list_display_links = ("uuid_identifier",)
