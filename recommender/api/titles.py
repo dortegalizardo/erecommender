@@ -1,5 +1,3 @@
-
-from fileinput import filename
 import io
 import json
 import os
@@ -40,7 +38,6 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 # SageMaker Estimator
 import sagemaker
-from sagemaker import get_execution_role
 from sagemaker.amazon.amazon_estimator import get_image_uri
 from sagemaker.predictor import csv_serializer, json_deserializer
 from sagemaker.session import s3_input

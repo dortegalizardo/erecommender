@@ -14,4 +14,5 @@ urlpatterns = [
     path("create_topic_estimator/<pk>/", api_views.CreateNTMEstimator.as_view(), name="create-topic-estimator"),
     path("get_topic_prediction/<pk>/", api_views.GetPredictorInformation.as_view(), name="get-prediction"),
     path("create_knn_estimator/<pk>/", api_views.CreateKNNEstimator.as_view(), name="create-knn-estimator"),
+    #path("create_recommendation/<pk>/", api_views.)
 ]
