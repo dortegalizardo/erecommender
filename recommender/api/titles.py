@@ -453,7 +453,8 @@ class GetPredictorInformation(APIView, S3SessionMakerMixin):
             file_name="predictions.csv",
             field=workflow.topic_predictions
         )
-        self._assign_predictions(workflow, predictions)
+        
+        # self._assign_predictions(workflow, predictions) # TODO > Determine if this is needed
         workflow.save()
         serialize_data = WorkflowSerializer(workflow, many=False).data
         return Response(serialize_data, status=status.HTTP_200_OK)
