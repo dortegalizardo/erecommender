@@ -56,9 +56,8 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
             return Response(serialized_data, status=status.HTTP_200_OK)
 
         # Get the workflow you are going to use to get the predictions label
-        workflow = body["workflow"]
         try:
-            current_workflow = Workflow.objects.get(uuid_identifier=workflow)
+            current_workflow = Workflow.objects.get(uuid_identifier=body["workflow"])
         except Workflow.DoesNotExist:
             response = {
                 "status": "ERROR",
@@ -87,7 +86,7 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
         test_vector = np.array(vector.todense())
 
         # Setting up the estimator
-        predictor_endpoint = workflow.knn_predictor_endpoint
+        predictor_endpoint = current_workflow.knn_predictor_endpoint
         try:
             session = sagemaker.Session(boto_session=session)
             knn_predictor = sagemaker.predictor.RealTimePredictor(
@@ -112,7 +111,7 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
 
         # Generate all the recommendations for the requested book
         order=0
-        book_list = workflow.booklist["training_ids"]
+        book_list = current_workflow.booklist["training_ids"]
         for item in test_result["labels"]:
             recommendation = Recommendation(
                 title=current_title,
