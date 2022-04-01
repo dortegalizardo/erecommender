@@ -140,8 +140,6 @@ class GetTextJSONFiles(APIView):
 
 class PrepareTrainData(APIView, S3SessionMakerMixin):
 
-    serializer_class = WorkflowSerializer
-
     def post(self, request):
         # Get data from request
         body = json.loads(request.body)
@@ -168,8 +166,12 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
             max_df=0.95,
             min_df=2
         )
-        titles_train = self._get_title_queryset(book_limit, list_keys, theme_filter)
+        titles_train, titles_id = self._get_title_queryset(book_limit, list_keys, theme_filter)
         titles = self._get_titles_text(titles_train)
+
+        workflow.booklist = {
+            "training_ids": titles_id
+        }
 
         print("Transform!")
         print("Started Tokenization...")
@@ -310,7 +312,10 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
             titles = Title.objects.all().exclude(complete_text=u'').order_by("-pk")
         if book_limit > 0:
             titles = titles[:book_limit]
-        return titles
+        titles_id = []
+        for title in titles:
+            titles_id.append(title.id)
+        return titles, titles_id
 
     def _get_titles_text(self, queryset) -> list:
         """
@@ -348,13 +353,21 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
 
 
 class CreateNTMEstimator(APIView, S3SessionMakerMixin):
-    def post(self, request):
-        # Pulling the ntm image in the current region
+    def post(self, request, pk, *args, **kwargs):
         role, session = self._get_profile_role()
         container = get_image_uri(session.region_name, 'ntm')
-        body = json.loads(request.body)
         request_status = status.HTTP_200_OK
-        # Create Estimator
+
+        # Get the Workflow that contains all the information
+        workflow = Workflow.objects.filter(pk=pk)
+        if not workflow.exists():
+            return Response({
+                "status": "ERROR",
+                "message": "Workflow doesn't exist!"
+            }, status=status.HTTP_404_NOT_FOUND)
+        workflow = workflow.first()
+
+        # Try to create TOPIC Estimator
         print("Starting Estimator Creation")
         try:
             session = sagemaker.Session(boto_session=session)
@@ -363,7 +376,7 @@ class CreateNTMEstimator(APIView, S3SessionMakerMixin):
                 role,
                 train_instance_count=2,
                 train_instance_type="ml.c5.xlarge",
-                output_path=body["paths"]["output_path"],
+                output_path=workflow.s3_paths["training"]["output_path"],
                 sagemaker_session=session
             )
             # set the hyperparameters for the topic model
@@ -375,8 +388,8 @@ class CreateNTMEstimator(APIView, S3SessionMakerMixin):
                 num_patience_epochs=5,
                 tolerance=0.001
             )
-            s3_train = s3_input(body["paths"]["s3_train_data"], distribution="ShardedByS3Key")
-            ntm.fit({'train': s3_train, 'test': body["paths"]["s3_val_data"]})
+            s3_train = s3_input(workflow.s3_paths["training"]["s3_train_data"], distribution="ShardedByS3Key")
+            ntm.fit({'train': s3_train, 'test': workflow.s3_paths["training"]["s3_val_data"]})
             ntm_predictor = ntm.deploy(initial_instance_count=1, instance_type='ml.c5.xlarge')
             endpoint = ntm_predictor.__dict__["endpoint"]
         except Exception as e:
@@ -389,30 +402,28 @@ class CreateNTMEstimator(APIView, S3SessionMakerMixin):
             return Response(response, status=request_status)
 
         # Response body in case everything ran smooth
-        response = {
-            "status": "Ok",
-            "predictor": endpoint,
-            "paths": body["paths"],
-            "test_vectors_path": body["test_vectors_path"],
-            "vectors_path": body["vectors_path"],
-            "vocab_list": body["vocab_list"],
-            "index": body["index"],
-            "new_index": body["new_index"]
-            
-        }
-        return Response(response, status=request_status)
+        workflow.ntm_predictor_endpoint = endpoint
+        workflow.save()
+        serialize_data = WorkflowSerializer(workflow, many=False).data
+        return Response(serialize_data, status=request_status)
 
 
 class GetPredictorInformation(APIView, S3SessionMakerMixin):
-    def post(self, request):
-        body = json.loads(request.body)
+    def post(self, request, pk, *args, **kwargs):
+
+        # Get the Workflow that contains all the information
+        workflow = Workflow.objects.filter(pk=pk)
+        if not workflow.exists():
+            return Response({
+                "status": "ERROR",
+                "message": "Workflow doesn't exist!"
+            }, status=status.HTTP_404_NOT_FOUND)
+        workflow = workflow.first()
+
         role, session = self._get_profile_role()
-        vectors_path = body["vectors_path"]
-        vocab_list = np.loadtxt(body["vocab_list"],  dtype='str')
-        index = np.loadtxt(body["index"],  dtype='int')
-        new_index = np.loadtxt(body["new_index"],  dtype='int')
+        vectors_path = workflow.training_vectors
         vectors = self._get_vector(vectors_path)
-        predictor_endpoint = body["predictor"]
+        predictor_endpoint = workflow.ntm_predictor_endpoint
         predictions = []
         sagemaker_session = sagemaker.Session(boto_session=session)
         try:
@@ -424,29 +435,28 @@ class GetPredictorInformation(APIView, S3SessionMakerMixin):
             ntm_predictor.serializer = csv_serializer
             ntm_predictor.deserializer = json_deserializer
         except Exception as e:
-            print(e)
+            response = {
+                "status": "ERROR",
+                "message": e
+            }
+            return Response(response, status=status.HTTP_400_BAD_REQUEST)
         
         for item in np.array(vectors.todense()):
             np.shape(item)
             results = ntm_predictor.predict(item)
-            print(results)
             predictions.append(np.array([prediction['topic_weights'] for prediction in results['predictions']]))
         
         predictions = np.array([np.ndarray.flatten(x) for x in predictions])
-        np.savetxt(f'{settings.BOOK_PATH}/predictions.csv', predictions, fmt='%s')
-
-        response = {
-            "status": "Ok",
-            "predictor": predictor_endpoint,
-            "paths": body["paths"],
-            "test_vectors_path": body["test_vectors_path"],
-            "vectors_path": body["vectors_path"],
-            "vocab_list": body["vocab_list"],
-            "index": body["index"],
-            "new_index": body["new_index"],
-            "predictions": f'{settings.BOOK_PATH}/predictions.csv'    
-        }
-        return Response(response, status=status.HTTP_200_OK)
+        np.savetxt(f'{settings.BOOK_PATH}/{workflow.pk}/predictions.csv', predictions, fmt='%s')
+        self._assign_file_worklfow(
+            file_path=f'{settings.BOOK_PATH}/{workflow.pk}/predictions.csv',
+            file_name="predictions.csv",
+            field=workflow.topic_predictions
+        )
+        self._assign_predictions(workflow, predictions)
+        workflow.save()
+        serialize_data = WorkflowSerializer(workflow, many=False).data
+        return Response(serialize_data, status=status.HTTP_200_OK)
     
     def _get_vector(self, vectors_path):
         """
@@ -457,21 +467,51 @@ class GetPredictorInformation(APIView, S3SessionMakerMixin):
         vectors = sparse.csr_matrix(vectors, dtype=np.float32)
         return vectors
 
+    def _assign_file_worklfow(self, file_path: str, file_name:str, field: any) -> None:
+        """
+        Function that saves files for a particular workflow
+        :param file_path str:
+        :param file_name str:
+        :param field Workflow field:
+        :return None:
+        """
+        local_file = open(file_path)
+        parsed_file = File(local_file)
+        field.save(file_name, parsed_file)
+        local_file.close()
+        return None
+    
+    def _assign_predictions(self, workflow: any, predictions: any) -> None:
+        """
+        Function that assigns an index prediction to the book list
+        """
+        book_list = workflow.booklist
+        prediction_mapping = {}
+        prediction_count = 0
+        for book in book_list:
+            prediction_mapping[str(book)] = predictions(prediction_count)
+            prediction_count += 1
+        workflow.booklist["predictions"] = prediction_mapping
+        workflow.save()
+        return None
+
 
 class CreateKNNEstimator(APIView, S3SessionMakerMixin):
 
-    def post(self, request):
-        body = json.loads(request.body)
+    def post(self, request, pk, *args, **kwargs):
+        # Get the Workflow that contains all the information
+        workflow = Workflow.objects.filter(pk=pk)
+        if not workflow.exists():
+            return Response({
+                "status": "ERROR",
+                "message": "Workflow doesn't exist!"
+            }, status=status.HTTP_404_NOT_FOUND)
+        workflow = workflow.first()
+
         role, session = self._get_profile_role()
-        vectors_path = body["vectors_path"]
-        test_vector_path = body["test_vectors_path"]
-        vocab_list = np.loadtxt(body["vocab_list"],  dtype='str')
-        index = np.loadtxt(body["index"],  dtype='int')
-        new_index = np.loadtxt(body["new_index"],  dtype='int')
-        # vectors = self._get_vector(vectors_path)
-        predictor_endpoint = body["predictor"]
-        predictions = np.loadtxt(body["predictions"],  dtype='float')
-        print(predictions)
+        index = np.loadtxt(workflow.index.file,  dtype='int')
+        new_index = np.loadtxt(workflow.new_index.file,  dtype='int')
+        predictions = np.loadtxt(workflow.topic_predictions.file,  dtype='float')
         
         # Starting configuration process
         labels = new_index 
@@ -484,7 +524,7 @@ class CreateKNNEstimator(APIView, S3SessionMakerMixin):
         buf.seek(0)
 
         bucket_name = SAGEMAKER_BUCKET
-        prefix = PREFIX
+        prefix = f"{PREFIX}-WORKFLOW-{workflow.pk}"
         key = 'knn/train'
 
         # Uploading training data to knn/train
@@ -494,13 +534,16 @@ class CreateKNNEstimator(APIView, S3SessionMakerMixin):
 
         fname = os.path.join(prefix, key)
         bucket.Object(fname).upload_fileobj(buf)
-        # boto3.resource('s3').Bucket(bucket).Object(fname).upload_fileobj(buf)
         s3_train_data = 's3://{}/{}/{}'.format(bucket_name, prefix, key)
         print('uploaded training data location: {}'.format(s3_train_data))
 
         # Setting an output path
         output_path = 's3://' + bucket_name + '/' + prefix + '/knn/output'
-        
+        workflow.s3_paths["classifier_paths"] = {
+            "output_path": output_path,
+            "s3_train_data": s3_train_data
+        }
+        workflow.save()
         hyperparams = {
             'feature_dim': predictions.shape[1],
             'k': NUM_NEIGHBORS,
@@ -508,7 +551,7 @@ class CreateKNNEstimator(APIView, S3SessionMakerMixin):
             'predictor_type': 'classifier' ,
             'index_metric':'COSINE'
         }
-        
+        endpoint_name = ""
         try:
             session = sagemaker.Session(boto_session=session)
             knn = sagemaker.estimator.Estimator(get_image_uri(boto3.Session().region_name, "knn"),
@@ -524,39 +567,25 @@ class CreateKNNEstimator(APIView, S3SessionMakerMixin):
             knn.fit(fit_input)
 
             instance_type = 'ml.c5.xlarge'
-            model_name = 'knn_%s'% instance_type
             endpoint_name = 'knn-ml-c5-xlarge-%s'% (str(time.time()).replace('.','-'))
         
             print('setting up the endpoint...')
+            knn.deploy(
+                initial_instance_count=1,
+                instance_type=instance_type,
+                endpoint_name=endpoint_name,
+                accept="application/jsonlines; verbose=true"
+            )
 
-            knn_predictor = knn.deploy(initial_instance_count=1, instance_type=instance_type,
-                                        endpoint_name=endpoint_name,
-                                        accept="application/jsonlines; verbose=true")
-            knn_predictor.content_type = 'text/csv'
-            knn_predictor.serializer = csv_serializer
-            knn_predictor.deserializer = json_deserializer
+            print("KNN Deployed successfully!")
         except Exception as e:
-            print(e)
+            response = {
+                "status": "ERROR",
+                "message": e
+            }
+            return Response(response, status=status.HTTP_400_BAD_REQUEST)
         
-        test_vectors = joblib.load(test_vector_path)
-        test_vectors = np.array(test_vectors.todense())
-
-        for vec in test_vectors:
-            test_result = knn_predictor.predict(vec)
-            print(test_result)        
-
-        # Response body in case everything ran smooth
-        response = {
-            "status": "Ok",
-            "predictor": body["predictor"],
-            "paths": body["paths"],
-            "test_vectors_path": body["test_vectors_path"],
-            "vectors_path": body["vectors_path"],
-            "vocab_list": body["vocab_list"],
-            "index": body["index"],
-            "new_index": body["new_index"],
-            "knn_predictor": endpoint_name
-            
-        }
-
-        return Response(response)
+        workflow.knn_predictor_endpoint = endpoint_name
+        workflow.save()
+        serialize_data = WorkflowSerializer(workflow, many=False).data
+        return Response(serialize_data, status=status.HTTP_200_OK)
