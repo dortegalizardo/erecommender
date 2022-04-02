@@ -127,8 +127,9 @@ class GetTextJSONFiles(APIView):
 
         for title in queryset:
             folder = f"{file_path}/{title.identifier}"
-            merged_text = map_service.process_json_file(folder=folder)
+            merged_text, number_pages = map_service.process_json_file(folder=folder)
             title.complete_text = merged_text
+            title.number_pages = number_pages
             title.save()
             print(f"Complete text saved for -> {title.name}")
 
@@ -144,7 +145,7 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
         list_keys = body.get("list_keys", [])
         theme_filter = body.get("theme", None)
         start_time = time.time()
-
+        processed_documents = -452
         # Create Worflow
         workflow = Workflow()
         workflow.save()
@@ -158,7 +159,7 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
             input="content",
             analyzer="word",
             stop_words=spanish_words,
-            tokenizer=LTokenizer(),
+            tokenizer=LTokenizer(processed_documents),
             max_features=VOCAB_SIZE,
             max_df=0.95,
             min_df=2
@@ -293,7 +294,6 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
         :param field Workflow field:
         :return None:
         """
-        print(file_name)
         local_file = open(file_path)
         parsed_file = File(local_file)
         field.save(file_name, parsed_file)
@@ -302,11 +302,11 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
 
     def _get_title_queryset(self, book_limit, list_keys, theme_filter):
         if len(list_keys) > 0:
-            titles = Title.objects.filter(identifier__in=list_keys).exclude(complete_text=u'').order_by("-pk")
+            titles = Title.objects.filter(identifier__in=list_keys).exclude(complete_text=u'').order_by("pk")
         elif theme_filter:
-            titles = Title.objects.filter(theme=theme_filter).exclude(complete_text=u'').order_by("-pk")
+            titles = Title.objects.filter(theme=theme_filter).exclude(complete_text=u'').order_by("pk")
         else:
-            titles = Title.objects.all().exclude(complete_text=u'').order_by("-pk")
+            titles = Title.objects.all().exclude(complete_text=u'').order_by("pk")
         if book_limit > 0:
             titles = titles[:book_limit]
         titles_id = []

@@ -24,6 +24,8 @@ FORMAT = 'utf8'
 TYPE_UPOS = ['NOUN', 'PRON', 'PROPN', 'ADV', 'ADJ']
 PROFILE_NAME = "prod"
 
+NUMBER_PAGES = 20
+
 
 def _get_spanish_stop_words(unaccented: bool=True) -> list:
     """
@@ -43,7 +45,7 @@ def _get_spanish_stop_words(unaccented: bool=True) -> list:
 
 
 class LTokenizer(object):
-    def __init__(self, stanza_path=None, lang='es'):
+    def __init__(self, processed_documents, stanza_path=None, lang='es'):
         if stanza_path is None:
             stanza_path = os.path.join(str(Path.home()), 'stanza_resources')
         try:
@@ -52,6 +54,7 @@ class LTokenizer(object):
             print(e)
             raise Exception(f"Language: '{lang}' is not supported by stanza. Try specifying another language")
         self.nlp = stanza.Pipeline('es')
+        self.processed_documents = processed_documents
 
     def __call__(self, doc):
         list_words = []
@@ -60,7 +63,8 @@ class LTokenizer(object):
             for token in sentence.tokens:
                 if (token.end_char - token.start_char) > 3 and re.match("[a-z].*", token.words[0].text) and token.words[0].upos in TYPE_UPOS:
                     list_words.append(token.words[0].to_dict()['lemma'])
-        print("Document finished!")
+        self.processed_documents += 1
+        print(f"Document finished -> {self.processed_documents}")
         return list_words
 
 
@@ -74,25 +78,27 @@ class MapTitleTextJSONFiles:
     def process_json_file(self, folder) -> str:
         summary = None
         merged_text = ''
+        number_pages = 0
         try:
             with open(f"{folder}/summary.json") as file:
                 summary = json.load(file)
+                number_pages = len(summary)
                 random_keys = self._random_keys(summary)
                 merged_text = self._string_merge(summary, random_keys)
                 # parsed_text = self._parsed_text(merged_text) TODO > No sé que hacer con esto ya!
-        except Exception as e:  # Errores ligados a abrir el archivo temporal.
+        except Exception as e:
             print(f"Something went wrong! {e}")
         print("Processing has finished!")
-        return merged_text.replace("- ","")
+        return merged_text.replace("- ",""), number_pages
 
     def _random_keys(self, summary:any) -> list:
         random_keys = []
         amount_keys = len(summary)
         random_keys = list(range(amount_keys)) 
         random.shuffle(random_keys)
-        if amount_keys < 15:
+        if amount_keys < NUMBER_PAGES:
             return random_keys
-        return random_keys[0:15]
+        return random_keys[0:NUMBER_PAGES]
 
     def _string_merge(self, summary: any, random_keys: list) -> str:
         '''

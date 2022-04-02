@@ -34,6 +34,7 @@ PREFIX = "recommender"
 NUM_TOPICS=50
 NUM_NEIGHBORS=5
 
+
 class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
     
     def post(self, request, pk, *args, **kwargs):
