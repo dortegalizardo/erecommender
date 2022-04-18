@@ -42,6 +42,7 @@ class Title(models.Model):
     parsed_tokens = models.TextField(_("Tokens"), blank=True, help_text=_("Input tokens separated by a comma"))
     vector_file = models.FileField(upload_to="vectors_file", blank=True, null=True, help_text=_("Field to save a vector"))
     number_pages = models.IntegerField(_("Number of pages"), default=0, help_text=_("Input the amount of pages of the book."))
+    training_book = models.BooleanField(_("Is for training?"), default=False, help_text=_("Is the book used for training?"))
 
     class Meta:
         verbose_name = "Ranked Title"

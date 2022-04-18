@@ -24,7 +24,7 @@ FORMAT = 'utf8'
 TYPE_UPOS = ['NOUN', 'PRON', 'PROPN', 'ADV', 'ADJ']
 PROFILE_NAME = "prod"
 
-NUMBER_PAGES = 20
+NUMBER_PAGES = 40
 
 
 def _get_spanish_stop_words(unaccented: bool=True) -> list:

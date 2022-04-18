@@ -73,15 +73,17 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
             }
             return Response(response, status=status.HTTP_400_BAD_REQUEST)
 
-        # Content vectorization 
+        print(type(current_workflow.booklist["training_ids"]))
+        # Content vectorization
+        processed_documents = 0 
         vectorizer = CountVectorizer(
             input="content",
             analyzer="word",
             stop_words=spanish_words,
-            tokenizer=LTokenizer(),
-            max_features=VOCAB_SIZE,
-            max_df=0.95,
-            min_df=2
+            tokenizer=LTokenizer(processed_documents),
+            max_features=50,
+            max_df=2,
+            min_df=0.95
         )
         vector = vectorizer.fit_transform([current_title.complete_text])
         test_vector = np.array(vector.todense())
@@ -116,8 +118,9 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
         for item in test_result["labels"]:
             recommendation = Recommendation(
                 title=current_title,
-                recommendation=self._get_title(book_list(int(item))),
-                order=order
+                recommendation=self._get_title(book_list[int(item)+1]),
+                order=order,
+                average_rating = 1.0
             )
             recommendation.save()
             order+=1
@@ -127,4 +130,4 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
         return Response(serialized_data, status=status.HTTP_200_OK)
 
     def _get_title(self, title_id:int) -> Title:
-        return Title.object.get(pk=title_id)
+        return Title.objects.get(pk=title_id)

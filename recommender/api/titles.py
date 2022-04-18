@@ -96,7 +96,7 @@ class MapTitleInformation(APIView):
         raise NotImplementedError("Method not implemented yet")
 
     def _create_title_from_service(self, title: dict) -> None:
-        test_title = Title.objects.filter(identifier=title.get("sync_key"))
+        test_title = Title.objects.filter(identifier=title.get("sync_key"), training_book=False)
         if not test_title.exists():
             if title.get("theme"):
                 theme = title.get("theme")[0]["name"]
@@ -120,7 +120,7 @@ class GetTextJSONFiles(APIView):
         if process_all:
             queryset = Title.objects.all()
         else:
-            queryset = Title.objects.filter(complete_text="")
+            queryset = Title.objects.filter(complete_text=u'')
 
         # Process all files
         map_service = MapTitleTextJSONFiles(settings.BOOK_PATH)
