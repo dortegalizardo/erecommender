@@ -43,6 +43,7 @@ class Title(models.Model):
     vector_file = models.FileField(upload_to="vectors_file", blank=True, null=True, help_text=_("Field to save a vector"))
     number_pages = models.IntegerField(_("Number of pages"), default=0, help_text=_("Input the amount of pages of the book."))
     training_book = models.BooleanField(_("Is for training?"), default=False, help_text=_("Is the book used for training?"))
+    cover = models.URLField(_("Cover"), blank=True, null=True, help_text=_("Set the cover url"))
 
     class Meta:
         verbose_name = "Ranked Title"
@@ -57,6 +58,7 @@ class Recommendation(models.Model):
     recommendation = models.ForeignKey(Title, verbose_name=_("Recommendation"), related_name="recommendation", on_delete=models.CASCADE)
     order = models.IntegerField(default=0)
     average_rating = models.DecimalField(_("Rating"), max_digits=6, decimal_places=2, help_text="This is a calculated field, please don't modify")
+    workflow = models.ForeignKey(Workflow, blank=True, null=True, verbose_name=_("Workflow"), on_delete=models.CASCADE, help_text=_("Select the workflow associated to this recommendation."))
 
     class Meta:
         verbose_name = "Recommendation"

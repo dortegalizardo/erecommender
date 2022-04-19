@@ -587,3 +587,30 @@ class CreateKNNEstimator(APIView, S3SessionMakerMixin):
         workflow.save()
         serialize_data = WorkflowSerializer(workflow, many=False).data
         return Response(serialize_data, status=status.HTTP_200_OK)
+
+
+class CreateTestVectors(APIView):
+    def post(self, request, pk, *args, **kwargs):
+        processed_documents = -452
+        vectorizer = CountVectorizer(
+            input="content",
+            analyzer="word",
+            stop_words=spanish_words,
+            tokenizer=LTokenizer(processed_documents),
+            max_features=VOCAB_SIZE,
+            max_df=0.95,
+            min_df=2
+        )
+        # Getting all the books and text needed.
+        titles = Title.objects.filter(training_book=False).exclude(complete_text=u'').order_by("pk")
+        tiltes_list = []
+        for item in titles:
+            tiltes_list.append(item.complete_text)
+        
+        
+        vectors = vectorizer.fit_transform(tiltes_list)
+        joblib.dump(vectors, f"{settings.BOOK_PATH}/{pk}/test_vectors.joblib")
+        print(type(vectors))
+        vocab_list = vectorizer.get_feature_names_out()
+        
+        return Response({}, status=status.HTTP_200_OK)
