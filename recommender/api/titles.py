@@ -42,12 +42,12 @@ from sagemaker.amazon.amazon_estimator import get_image_uri
 from sagemaker.predictor import csv_serializer, json_deserializer
 from sagemaker.session import s3_input
 
-VOCAB_SIZE = 2000
+VOCAB_SIZE = 4000
 SAGEMAKER_BUCKET = "sagemaker-erecommender"
 PROFILE_NAME = "prod"
 PREFIX = "recommender"
-NUM_TOPICS=50
-NUM_NEIGHBORS=5
+NUM_TOPICS=150
+NUM_NEIGHBORS=10
 
 
 class DownloadTitles(APIView):
@@ -306,7 +306,8 @@ class PrepareTrainData(APIView, S3SessionMakerMixin):
         elif theme_filter:
             titles = Title.objects.filter(theme=theme_filter).exclude(complete_text=u'').order_by("pk")
         else:
-            titles = Title.objects.all().exclude(complete_text=u'').order_by("pk")
+            titles = Title.objects.filter(training_book=True).exclude(complete_text=u'').order_by("pk")
+            print(f"The amount of titles is -> {titles.count()}")
         if book_limit > 0:
             titles = titles[:book_limit]
         titles_id = []
@@ -591,6 +592,8 @@ class CreateKNNEstimator(APIView, S3SessionMakerMixin):
 
 class CreateTestVectors(APIView):
     def post(self, request, pk, *args, **kwargs):
+        # TODO > SIMPLY do this better.
+
         processed_documents = -452
         vectorizer = CountVectorizer(
             input="content",
@@ -612,5 +615,4 @@ class CreateTestVectors(APIView):
         joblib.dump(vectors, f"{settings.BOOK_PATH}/{pk}/test_vectors.joblib")
         print(type(vectors))
         vocab_list = vectorizer.get_feature_names_out()
-        
         return Response({}, status=status.HTTP_200_OK)

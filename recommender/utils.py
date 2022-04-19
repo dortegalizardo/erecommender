@@ -21,7 +21,7 @@ from recommender._stop_words_sp import SPANISH_WORDS
 
 FORMAT = 'utf8'
 
-TYPE_UPOS = ['NOUN', 'PRON', 'PROPN', 'ADV', 'ADJ']
+TYPE_UPOS = ['NOUN', 'PRON', 'ADV']
 PROFILE_NAME = "prod"
 
 NUMBER_PAGES = 40
@@ -85,7 +85,6 @@ class MapTitleTextJSONFiles:
                 number_pages = len(summary)
                 random_keys = self._random_keys(summary)
                 merged_text = self._string_merge(summary, random_keys)
-                # parsed_text = self._parsed_text(merged_text) TODO > No sé que hacer con esto ya!
         except Exception as e:
             print(f"Something went wrong! {e}")
         print("Processing has finished!")
