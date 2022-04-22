@@ -59,6 +59,7 @@ class Recommendation(models.Model):
     order = models.IntegerField(default=0)
     average_rating = models.DecimalField(_("Rating"), max_digits=6, decimal_places=2, help_text="This is a calculated field, please don't modify")
     workflow = models.ForeignKey(Workflow, blank=True, null=True, verbose_name=_("Workflow"), on_delete=models.CASCADE, help_text=_("Select the workflow associated to this recommendation."))
+    distance = models.CharField(_("Distance"), blank=True, max_length=20, help_text=_("This represents the distance between vectors."))
 
     class Meta:
         verbose_name = "Recommendation"

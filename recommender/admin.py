@@ -15,8 +15,9 @@ class TitleAdmin(admin.ModelAdmin):
 
 @admin.register(Recommendation)
 class RecommendationAdmin(admin.ModelAdmin):
-    list_display = ("title", "recommendation",)
+    list_display = ("title", "recommendation", "distance",)
     list_display_links = ("title",)
+    search_fields = ("title__name",)
 
 
 @admin.register(Workflow)

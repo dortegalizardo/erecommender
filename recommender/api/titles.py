@@ -606,6 +606,7 @@ class CreateTestVectors(APIView):
         )
         # Getting all the books and text needed.
         titles = Title.objects.filter(training_book=False).exclude(complete_text=u'').order_by("pk")
+        print(f"Number of titles to vectorize -> {titles.count()}")
         tiltes_list = []
         for item in titles:
             tiltes_list.append(item.complete_text)

@@ -53,12 +53,6 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
             }
             return Response(response, status=status.HTTP_404_NOT_FOUND)
 
-        # Test if the book already has recommendations generated
-        recommendations_set = Recommendation.objects.filter(title=current_title)
-        if recommendations_set.exists():
-            serialized_data = RecommendationSerializer(recommendations_set, many=True).data
-            return Response(serialized_data, status=status.HTTP_200_OK)
-
         # Get the workflow you are going to use to get the predictions label
         try:
             current_workflow = Workflow.objects.get(uuid_identifier=body["workflow"])
@@ -68,6 +62,12 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
                 "message": "Worfklow not found!"
             }
             return Response(response, status=status.HTTP_404_NOT_FOUND)
+
+        # Test if the book already has recommendations generated
+        recommendations_set = Recommendation.objects.filter(title=current_title, workflow=current_workflow)
+        if recommendations_set.exists():
+            serialized_data = RecommendationSerializer(recommendations_set, many=True).data
+            return Response(serialized_data, status=status.HTTP_200_OK)
 
         if current_title.complete_text =='':
             response = {
@@ -83,7 +83,7 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
             if item == current_title:
                 break
             test_counter+=1
-        print(f"Test Counter -> {test_counter}")
+
         # NTM Predictor
         ntm_endpoint = current_workflow.ntm_predictor_endpoint
         try:
@@ -138,6 +138,7 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
         for vec in test_topics:
             test_result = knn_predictor.predict(vec)
 
+        distances = test_result["distances"]
         # Generate all the recommendations for the requested book
         order=0
         book_list = current_workflow.booklist["training_ids"]
@@ -147,7 +148,8 @@ class GetRecommendationAPIView(APIView, S3SessionMakerMixin):
                 recommendation=self._get_title(book_list[int(item)]),
                 order=order,
                 average_rating = 1.0,
-                workflow=current_workflow
+                workflow=current_workflow,
+                distance=str(distances[order])
             )
             recommendation.save()
             order+=1
